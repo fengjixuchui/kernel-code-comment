@@ -86,7 +86,7 @@ typedef enum {
 #define ext4_read_dirblock(inode, block, type) \
 	__ext4_read_dirblock((inode), (block), (type), __LINE__)
 
-static struct buffer_head *__ext4_read_dirblock(struct inode *inode,
+static struct buffer_head *__ext4_read_dirblock(struct inode *inode,//inode是父目录的
 					      ext4_lblk_t block,
 					      dirblock_type_t type,
 					      unsigned int line)
@@ -94,7 +94,7 @@ static struct buffer_head *__ext4_read_dirblock(struct inode *inode,
 	struct buffer_head *bh;
 	struct ext4_dir_entry *dirent;
 	int err = 0, is_dx_block = 0;
-
+    //根据传入的目录inode的逻辑地址block从ext4文件系统的data block区分配1个物理块，并与逻辑地址block构成映射，最后返回这物理块的bh
 	bh = ext4_bread(NULL, inode, block, 0, &err);
 	if (!bh) {
 		if (err == 0) {
@@ -110,7 +110,7 @@ static struct buffer_head *__ext4_read_dirblock(struct inode *inode,
 	}
 	dirent = (struct ext4_dir_entry *) bh->b_data;
 	/* Determine whether or not we have an index block */
-	if (is_dx(inode)) {
+	if (is_dx(inode)) {//no
 		if (block == 0)
 			is_dx_block = 1;
 		else if (ext4_rec_len_from_disk(dirent->rec_len,
@@ -1047,6 +1047,8 @@ static inline int search_dirblock(struct buffer_head *bh,
 				  unsigned int offset,
 				  struct ext4_dir_entry_2 **res_dir)
 {
+    //bh映射父目录dir的物理块，d_name是当前要查找的文件或者目录名字，bh->b_data则是该物理块的数据，
+    //这些数据就是一个个该父目录下的子文件或子目录的ext4_dir_entry_2结构
 	return search_dir(bh, bh->b_data, dir->i_sb->s_blocksize, dir,
 			  d_name, offset, res_dir);
 }
@@ -1143,11 +1145,13 @@ static inline int ext4_match (int len, const char * const name,
 /*
  * Returns 0 if not found, -1 on failure, and 1 on success
  */
+//在bh页缓存(就是保存dir父目录数据的物理块映射的bh，一个个ext4_dir_entry_2结构)查找是否有名字是d_name是的子目录或子文件，
+//找到返回1，并且res_dir指向这个文件或目录的ext4_dir_entry_2
 int search_dir(struct buffer_head *bh,
-	       char *search_buf,
+	       char *search_buf,//search_buf就是bh->b_data，里边的数据就是dir父目录下一个个子文件或子目录的ext4_dir_entry_2结构
 	       int buf_size,
 	       struct inode *dir,
-	       const struct qstr *d_name,
+	       const struct qstr *d_name,//d_name是当前要搜索的子文件或子目录名字
 	       unsigned int offset,
 	       struct ext4_dir_entry_2 **res_dir)
 {
@@ -1156,28 +1160,36 @@ int search_dir(struct buffer_head *bh,
 	int de_len;
 	const char *name = d_name->name;
 	int namelen = d_name->len;
-
+    
+    //search_buf的数据就是一个个该父目录下的子文件或子目录的ext4_dir_entry_2结构，de指向它首地址
 	de = (struct ext4_dir_entry_2 *)search_buf;
 	dlimit = search_buf + buf_size;
+    //de指向父目录数据的一个个ext4_dir_entry_2结构(ext4_dir_entry_2包含了父目录的子文件或者子目录名字等信息)，与待查找的文件或目录
+    //名字d_name进行匹配，找到则返回1
 	while ((char *) de < dlimit) {
 		/* this code is executed quadratically often */
 		/* do minimal checking `by hand' */
-
+        //ext4_match (namelen, name, de)是拿着本次要查找的文件或者目录名字name与父目录的de指向的子目录或子文件的的名字
+        //(ext4_dir_entry_2的name成员)比较，一致则在父目录dir中找到了要查找的文件或目录
 		if ((char *) de + namelen <= dlimit &&
 		    ext4_match (namelen, name, de)) {
 			/* found a match - just to be sure, do a full check */
 			if (ext4_check_dir_entry(dir, NULL, de, bh, bh->b_data,
 						 bh->b_size, offset))
 				return -1;
+            //在父目录找到了名字是d_name的文件或目录，终于找到了，*res_dir = de指向这个找到的文件或目录ext4_dir_entry_2结构
 			*res_dir = de;
 			return 1;
 		}
 		/* prevent looping on a bad block */
+        //就是de_len=de->rec_len，这应该是一个ext4_dir_entry_2结构的大小
 		de_len = ext4_rec_len_from_disk(de->rec_len,
 						dir->i_sb->s_blocksize);
 		if (de_len <= 0)
 			return -1;
+
 		offset += de_len;
+        //de增加de_len大小后指向父目录的下一个ext4_dir_entry_2结构
 		de = (struct ext4_dir_entry_2 *) ((char *) de + de_len);
 	}
 	return 0;
@@ -1210,8 +1222,10 @@ static int is_dx_internal_node(struct inode *dir, ext4_lblk_t block,
  * The returned buffer_head has ->b_count elevated.  The caller is expected
  * to brelse() it when appropriate.
  */
-static struct buffer_head * ext4_find_entry (struct inode *dir,
-					const struct qstr *d_name,
+//在父目录的物理块中(数据是一个个ext4_dir_entry_2结构)查找是否有名字是d_name的子目录或子文件，找到则返回保存这个子文件或子目录
+//ext4_dir_entry_2结构的物理块映射的bh，de指向这个ext4_dir_entry_2结构
+static struct buffer_head * ext4_find_entry (struct inode *dir,//dir是当前要搜索的子文件或子目录的父目录dir
+					const struct qstr *d_name,//d_name是当前要搜索的子文件或子目录名字
 					struct ext4_dir_entry_2 **res_dir,
 					int *inlined)
 {
@@ -1220,8 +1234,10 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 	struct buffer_head *bh, *ret = NULL;
 	ext4_lblk_t start, block, b;
 	const u8 *name = d_name->name;
+    //最大预读的保存父目录数据的物理块个数
 	int ra_max = 0;		/* Number of bh's in the readahead
 				   buffer, bh_use[] */
+    //当前使用的预读的保存父目录数据的物理块对应的逻辑块号
 	int ra_ptr = 0;		/* Current index into readahead
 				   buffer */
 	int num = 0;
@@ -1235,7 +1251,7 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 	if (namelen > EXT4_NAME_LEN)
 		return NULL;
 
-	if (ext4_has_inline_data(dir)) {
+	if (ext4_has_inline_data(dir)) {//不成立
 		int has_inline_data = 1;
 		ret = ext4_find_inline_entry(dir, d_name, res_dir,
 					     &has_inline_data);
@@ -1256,7 +1272,7 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 		nblocks = 1;
 		goto restart;
 	}
-	if (is_dx(dir)) {
+	if (is_dx(dir)) {//一般不成立，但偶尔会抓到执行这里
 		bh = ext4_dx_find_entry(dir, d_name, res_dir, &err);
 		/*
 		 * On success, or if the error was file not found,
@@ -1268,40 +1284,63 @@ static struct buffer_head * ext4_find_entry (struct inode *dir,
 		dxtrace(printk(KERN_DEBUG "ext4_find_entry: dx failed, "
 			       "falling back\n"));
 	}
+    //保存dir父目录数据的物理块个数
 	nblocks = dir->i_size >> EXT4_BLOCK_SIZE_BITS(sb);
+    //i_dir_start_lookup保存了上一次在dir父目录找到的子目录或子文件的物理块对应的逻辑块号，本次可能在这个物理块也会找到名字是d_name的子目录或子文件
 	start = EXT4_I(dir)->i_dir_start_lookup;
 	if (start >= nblocks)
 		start = 0;
+    //本次在dir父目录查找名字是d_name的子文件或目录的第一个物理块的逻辑块号，注意block这里是dir父目录的逻辑块号!!!!!!!!!!!!
 	block = start;
 restart:
 	do {
 		/*
 		 * We deal with the read-ahead logic here.
 		 */
+		/*这个预读很神奇，简单说明一下。for循环里第1次预读的dir父目录逻辑块block是i_dir_start_lookup，是上一次在dir父目录找到的
+        名字匹配子目录或子文件的的逻辑块号，比如是3。再假设父目录有7个物理块，即nblocks是7。则该for循环预读dir父目录的逻辑块block
+        是3、4、5、6对应的物理块数据，并把这些物理块的bh保存到bh_use[ra_max]，for循环结束时ra_max是4。然后开始循环执行大while循环里
+        的search_dirblock()，看父目录逻辑块是3、4、5、6 映射的物理块中，是否有名字是d_name的子目录或子文件。每查找一个逻辑块
+        则ra_ptr和block加1。如果这4个物理块都没找到名字是d_name的子目录或子文件，则while循环最后if (++block >= nblocks)成立，令block赋值0，
+        并且ra_ptr是4。再到大while循环开头时 if (ra_ptr >= ra_max)成立，再次触发预读，预读dir目录逻辑块0、1、2映射物理块
+        数据，然后再查找逻辑块0、1、2映射的物理块，是否有名字是d_name的子目录或子文件，每找一个block加1。如果都没有找到，则block是3，
+        则最后的while(block != start)成立，跳出while循环。这说明没有在dir目录找到名字是d_name的子目录或子文件。
+
+        因此，这个dir目录数据预读机制，说到底就是以父目录dir的i_dir_start_lookup逻辑块号为基准，一直预读到dir父目录最后一个逻辑块。
+        如果在这些逻辑块映射的物理块没找到名字是d_name的子目录或子文件的话，就从dir父目录开头(逻辑块号是0)再次预读物理块数据，
+        一直预读到dir父目录i_dir_start_lookup这个逻辑块，然后在这些逻辑块映射的物理块中查找名字是d_name的子目录或子文件*/
+        //这里是预读，最多预读8个保存父目录数据的物理块，并把这些物理块bh保存到bh_use[]。如果预读过程碰到父目录
+	    //最后一个物理块(即if (b >= nblocks)，则结束预读
 		if (ra_ptr >= ra_max) {
 			/* Refill the readahead buffer */
 			ra_ptr = 0;
 			b = block;
-			for (ra_max = 0; ra_max < NAMEI_RA_SIZE; ra_max++) {
+			for (ra_max = 0; ra_max < NAMEI_RA_SIZE; ra_max++) {//NAMEI_RA_SIZE是8
 				/*
 				 * Terminate if we reach the end of the
 				 * directory and must wrap, or if our
 				 * search has finished at this block.
 				 */
+				//b >= nblocks说明已经读取完了父目录的最后一个逻辑块对应的物理块数据到bh页缓存，那就break，没必要再读了
+				//(num && block == start)说明第二次预读，读到了最初的起始预读逻辑块start，那就break，没必要再读了
 				if (b >= nblocks || (num && block == start)) {
 					bh_use[ra_max] = NULL;
 					break;
 				}
 				num++;
+                //这里b是父目录逻辑块号，这里是根据逻辑块号b映射得到对应的物理块bh，这个物理块保存了父目录dir的子目录或子文件数据，
+                //是一个个子文件或子目录的ext4_dir_entry_2结构
 				bh = ext4_getblk(NULL, dir, b++, 0, &err);
 				bh_use[ra_max] = bh;
-				if (bh)
+				if (bh)//把该物理块数据读取到bh页缓存
 					ll_rw_block(READ | REQ_META | REQ_PRIO,
 						    1, &bh);
 			}
 		}
+        //当bh_use[ra_ptr++]是NULL说明前边预读的几个物理块都搜索过了，那就再次预读
 		if ((bh = bh_use[ra_ptr++]) == NULL)
 			goto next;
+        //确保bh的物理块已经读取到bh页缓存
 		wait_on_buffer(bh);
 		if (!buffer_uptodate(bh)) {
 			/* read error, skip block & hope for the best */
@@ -1321,26 +1360,35 @@ restart:
 			goto next;
 		}
 		set_buffer_verified(bh);
+
+        //在bh页缓存(就是保存dir父目录数据的物理块映射的bh，一个个ext4_dir_entry_2结构)查找是否有名字是d_name是的子目录或子文件，
+        //找到返回1，并且res_dir指向这个文件或目录的ext4_dir_entry_2。找不到返回0
 		i = search_dirblock(bh, dir, d_name,
 			    block << EXT4_BLOCK_SIZE_BITS(sb), res_dir);
+
+        //i是1说明在dir父目录bh页缓存对应的物理块找到名字是d_name的子目录或者子文件
 		if (i == 1) {
+            //i_dir_start_lookup保存最近一次在dir目录的物理块中搜索子目录或子文件的物理块对应的逻辑块号
 			EXT4_I(dir)->i_dir_start_lookup = block;
+            //ret指向bh
 			ret = bh;
 			goto cleanup_and_exit;
 		} else {
 			brelse(bh);
-			if (i < 0)
+			if (i < 0)//i<0 说明遇到IO错误
 				goto cleanup_and_exit;
 		}
 	next:
+        //在block这个物理块没有找到名字是d_name的子目录或者子文件，加1去下一个物理块查找
 		if (++block >= nblocks)
 			block = 0;
-	} while (block != start);
+	} while (block != start);//当block等于start，说明父目录的物理块全搜索了一遍，都没有找到名字匹配d_name的子目录或者子文件
 
 	/*
 	 * If the directory has grown while we were searching, then
 	 * search the last part of the directory before giving up.
 	 */
+	//前边搜索时父目录有了新的物理块，于是重新搜索，可能性很低吧
 	block = nblocks;
 	nblocks = dir->i_size >> EXT4_BLOCK_SIZE_BITS(sb);
 	if (block < nblocks) {
@@ -1352,6 +1400,7 @@ cleanup_and_exit:
 	/* Clean up the read-ahead blocks */
 	for (; ra_ptr < ra_max; ra_ptr++)
 		brelse(bh_use[ra_ptr]);
+    //如果在保存dir父目录数据的物理块搜索到了名字是d_name的子目录或者子文件则返回这个物理块的bh，否则返回NULL
 	return ret;
 }
 
@@ -1415,9 +1464,12 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 	if (dentry->d_name.len > EXT4_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
+    //在父目录的物理块中(数据是一个个ext4_dir_entry_2结构)查找是否有名字是d_name的子目录或子文件，找到则返回保存这个子文件或子目录
+    //ext4_dir_entry_2结构的物理块映射的bh，de指向这个ext4_dir_entry_2结构
 	bh = ext4_find_entry(dir, &dentry->d_name, &de, NULL);
 	inode = NULL;
 	if (bh) {
+        //带查找文件的inode编号
 		__u32 ino = le32_to_cpu(de->inode);
 		brelse(bh);
 		if (!ext4_valid_inum(dir->i_sb, ino)) {
@@ -1430,6 +1482,7 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 					 dentry->d_name.name);
 			return ERR_PTR(-EIO);
 		}
+        //由inode号得到inode结构
 		inode = ext4_iget_normal(dir->i_sb, ino);
 		if (inode == ERR_PTR(-ESTALE)) {
 			EXT4_ERROR_INODE(dir,
@@ -1438,6 +1491,7 @@ static struct dentry *ext4_lookup(struct inode *dir, struct dentry *dentry, unsi
 			return ERR_PTR(-EIO);
 		}
 	}
+    //inode和dentry都是带查找文件的，这是建立二者联系，添加到各自的链表
 	return d_splice_alias(inode, dentry);
 }
 
@@ -1628,41 +1682,56 @@ journal_error:
 	*error = err;
 	return NULL;
 }
-
-int ext4_find_dest_de(struct inode *dir, struct inode *inode,
-		      struct buffer_head *bh,
-		      void *buf, int buf_size,
-		      const char *name, int namelen,
+//在父目录的数据(就是一个个ext4_dir_entry_2结构)中，查找一个空闲的ext4_dir_entry_2，用于
+//保存本次名字是name的子目录或者子文件
+int ext4_find_dest_de(struct inode *dir, struct inode *inode,//inode都是待创建的目录或文件的
+		      struct buffer_head *bh,//bh是保存父目录的数据物理块映射的bh
+		      void *buf, int buf_size,//buf是bh->b_data，buf_size是bh->b_data这片buf大小，是4k-csum_size
+		      const char *name, int namelen,//name和namelen是待创建文件或目录的名字和长度
 		      struct ext4_dir_entry_2 **dest_de)
 {
 	struct ext4_dir_entry_2 *de;
+    //reclen 比 namelen 稍大，容纳一些冗余信息吧
 	unsigned short reclen = EXT4_DIR_REC_LEN(namelen);
 	int nlen, rlen;
 	unsigned int offset = 0;
 	char *top;
-
+    //buf是保存父目录的数据物理块映射的bh的buf，de指向这片内存首地址
 	de = (struct ext4_dir_entry_2 *)buf;
+    //top指向这片buf的顶端
 	top = buf + buf_size - reclen;
+    
+    //父目录的数据是一个个ext4_dir_entry_2结构，保存了子文件或者子目录的名字等关键信息。
+    //这个while循环是从保存父目录的数据的buf头开始，遍历一个个ext4_dir_entry_2结构
 	while ((char *) de <= top) {
 		if (ext4_check_dir_entry(dir, NULL, de, bh,
 					 buf, buf_size, offset))
 			return -EIO;
+        //如果父目录已经有了名字是name的文件或目录，返回EEXIST，不能重名
 		if (ext4_match(namelen, name, de))
 			return -EEXIST;
+        //nlen比de->name_len大几个字节
 		nlen = EXT4_DIR_REC_LEN(de->name_len);
+        //rlen = de->rec_len
 		rlen = ext4_rec_len_from_disk(de->rec_len, buf_size);
+        /*如果当前的de没被使用，de->inode应该是0，此时只要rlen>=reclen，则当前的de就是
+        选中的ext4_dir_entry_2。rlen是de的空间大小，reclen是本次创建的子目录或者子文件
+        的名字的长度，rlen>=reclen 说明de可以容纳下本次创建的子目录或者子文件*/
 		if ((de->inode ? rlen - nlen : rlen) >= reclen)
 			break;
+        //de指向下一个ext4_dir_entry_2结构
 		de = (struct ext4_dir_entry_2 *)((char *)de + rlen);
 		offset += rlen;
 	}
+    //de超过保存父目录的数据物理块映射bh的buf尾部，说明空间不够了
 	if ((char *) de > top)
 		return -ENOSPC;
-
+    
+    //de就是为本次的子文件或子目录找到的ext4_dir_entry_2结构
 	*dest_de = de;
 	return 0;
 }
-
+//对de这个ext4_dir_entry_2赋值待添加的文件或目录名字、inode编号、文件长度等等
 void ext4_insert_dentry(struct inode *inode,
 			struct ext4_dir_entry_2 *de,
 			int buf_size,
@@ -1680,6 +1749,7 @@ void ext4_insert_dentry(struct inode *inode,
 		de->rec_len = ext4_rec_len_to_disk(nlen, buf_size);
 		de = de1;
 	}
+    //对de这个ext4_dir_entry_2赋值待添加的文件或目录名字、inode编号、文件长度等等
 	de->file_type = EXT4_FT_UNKNOWN;
 	de->inode = cpu_to_le32(inode->i_ino);
 	ext4_set_de_type(inode->i_sb, de, inode->i_mode);
@@ -1694,12 +1764,16 @@ void ext4_insert_dentry(struct inode *inode,
  * space.  It will return -ENOSPC if no space is available, and -EIO
  * and -EEXIST if directory entry already exists.
  */
+//在父目录的数据中查找一个空闲的ext4_dir_entry_2赋值给de，然后对de这个ext4_dir_entry_2赋值待添加的文件或目录名字、inode编号、文件长度等等
 static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
-			     struct inode *inode, struct ext4_dir_entry_2 *de,
-			     struct buffer_head *bh)
+			     struct inode *inode, struct ext4_dir_entry_2 *de,//dentry和inode都是待创建的目录或文件的
+			     struct buffer_head *bh)//bh是保存父目录的数据物理块映射的bh
 {
+    //父目录
 	struct inode	*dir = dentry->d_parent->d_inode;
+    //本次创建的新文件或目录的名字
 	const char	*name = dentry->d_name.name;
+    //本次创建的新文件或目录的名字长度
 	int		namelen = dentry->d_name.len;
 	unsigned int	blocksize = dir->i_sb->s_blocksize;
 	int		csum_size = 0;
@@ -1709,7 +1783,8 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 				       EXT4_FEATURE_RO_COMPAT_METADATA_CSUM))
 		csum_size = sizeof(struct ext4_dir_entry_tail);
 
-	if (!de) {
+	if (!de) {//一般de是NULL
+        //在父目录的数据中查找一个空闲的ext4_dir_entry_2
 		err = ext4_find_dest_de(dir, inode,
 					bh, bh->b_data, blocksize - csum_size,
 					name, namelen, &de);
@@ -1724,6 +1799,7 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 	}
 
 	/* By now the buffer is marked for journaling */
+    //对de这个ext4_dir_entry_2赋值待添加的文件或目录名字、inode编号、文件长度等等
 	ext4_insert_dentry(inode, de, blocksize, name, namelen);
 
 	/*
@@ -1737,6 +1813,7 @@ static int add_dirent_to_buf(handle_t *handle, struct dentry *dentry,
 	 * happen is that the times are slightly out of date
 	 * and/or different from the directory change time.
 	 */
+	//更新父目录修改时间
 	dir->i_mtime = dir->i_ctime = ext4_current_time(dir);
 	ext4_update_dx_flag(dir);
 	dir->i_version++;
@@ -1876,9 +1953,11 @@ static int make_indexed_dir(handle_t *handle, struct dentry *dentry,
  * may not sleep between calling this and putting something into
  * the entry, as someone else might have used it while you slept.
  */
+//把dentry和inode对应的文件添加到它父目录ext4_dir_entry_2数据里
 static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
-			  struct inode *inode)
+			  struct inode *inode)//dentry和inode都是待创建的目录或文件的
 {
+    //父目录inode
 	struct inode *dir = dentry->d_parent->d_inode;
 	struct buffer_head *bh = NULL;
 	struct ext4_dir_entry_2 *de;
@@ -1895,11 +1974,11 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		csum_size = sizeof(struct ext4_dir_entry_tail);
 
 	sb = dir->i_sb;
-	blocksize = sb->s_blocksize;
+	blocksize = sb->s_blocksize;//ext4文件系统一个物理块4K大
 	if (!dentry->d_name.len)
 		return -EINVAL;
 
-	if (ext4_has_inline_data(dir)) {
+	if (ext4_has_inline_data(dir)) {//不成立
 		retval = ext4_try_add_inline_entry(handle, dentry, inode);
 		if (retval < 0)
 			return retval;
@@ -1909,7 +1988,7 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		}
 	}
 
-	if (is_dx(dir)) {
+	if (is_dx(dir)) {//大部分情况不成立
 		retval = ext4_dx_add_entry(handle, dentry, inode);
 		if (!retval || (retval != ERR_BAD_DX_DIR))
 			goto out;
@@ -1917,12 +1996,18 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		dx_fallback++;
 		ext4_mark_inode_dirty(handle, dir);
 	}
+    //dir->i_size是父目录的数据量大小，blocks是父目录数据占的block个数
 	blocks = dir->i_size >> sb->s_blocksize_bits;
+    /*这个for循环是根据父目录逻辑块地址0~blocks，依次读取这些逻辑块映射的物理块的数据，然后在这些物理块数据中查找一个空闲的
+      ext4_dir_entry_2结构，最后把本次添加的文件子文件或子目录的名字等信息赋值给ext4_dir_entry_2。这就相当于把该子目录或子文件添加到了父目录*/
 	for (block = 0; block < blocks; block++) {
+        //根据父目录的逻辑地址block从ext4文件系统的data block区分配1个物理块，并与逻辑地址block构成映射，最后返回
+        //这物理块的bh。注意，bh->b_data就保存了该父目录的一个物理块数据，是一个个包含子目录或者子文件名字等信息的ext4_dir_entry_2结构
 		bh = ext4_read_dirblock(dir, block, DIRENT);
 		if (IS_ERR(bh))
 			return PTR_ERR(bh);
-
+        //在父目录的block块数据中查找一个空闲的ext4_dir_entry_2结构并赋值给de，然后对de这个ext4_dir_entry_2结构赋值待添加的文件或目录名字、
+        //inode编号、文件长度等信息。这里就相当于把新的文件或目录添加到了父目录
 		retval = add_dirent_to_buf(handle, dentry, inode, NULL, bh);
 		if (retval != -ENOSPC)
 			goto out;
@@ -1935,6 +2020,7 @@ static int ext4_add_entry(handle_t *handle, struct dentry *dentry,
 		}
 		brelse(bh);
 	}
+    //执行到这里，应该是说，dir父目录数据块被占满了，则需要增加一个物理块，并返回它的bh，最后把本次的子目录或子文件添加到这个父目录新的物理块
 	bh = ext4_append(handle, dir, &block);
 	if (IS_ERR(bh))
 		return PTR_ERR(bh);
@@ -2213,10 +2299,13 @@ static void ext4_dec_count(handle_t *handle, struct inode *inode)
 static int ext4_add_nondir(handle_t *handle,
 		struct dentry *dentry, struct inode *inode)
 {
+    //把dentry和inode对应的文件或目录添加到它父目录
 	int err = ext4_add_entry(handle, dentry, inode);
 	if (!err) {
+        //标记inode脏，重点是 根据inode编号得到它在 所属的块组的inode table的物理块号
 		ext4_mark_inode_dirty(handle, inode);
 		unlock_new_inode(inode);
+        //建立dentry和inode联系
 		d_instantiate(dentry, inode);
 		return 0;
 	}
@@ -2235,7 +2324,7 @@ static int ext4_add_nondir(handle_t *handle,
  * with d_instantiate().
  */
 static int ext4_create(struct inode *dir, struct dentry *dentry, umode_t mode,
-		       bool excl)
+		       bool excl)//dentry是待创建文件dentry
 {
 	handle_t *handle;
 	struct inode *inode;
@@ -2246,14 +2335,18 @@ static int ext4_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	credits = (EXT4_DATA_TRANS_BLOCKS(dir->i_sb) +
 		   EXT4_INDEX_EXTRA_TRANS_BLOCKS + 3);
 retry:
+    //为新创建的文件分配一个inode结构，接着为该文件找一个有空闲inode和空闲block的块组group，然后
+    //在该块组的inode bitmap找一个空闲inode编号，最后把该inode编号赋值给inode->i_ino
 	inode = ext4_new_inode_start_handle(dir, mode, &dentry->d_name, 0,
 					    NULL, EXT4_HT_DIR, credits);
 	handle = ext4_journal_current_handle();
 	err = PTR_ERR(inode);
-	if (!IS_ERR(inode)) {
+	if (!IS_ERR(inode)) {//为文件分配inode成功
+        //为inode个i_op和i_fop赋值
 		inode->i_op = &ext4_file_inode_operations;
 		inode->i_fop = &ext4_file_operations;
 		ext4_set_aops(inode);
+        //把dentry和inode对应的文件或目录添加到它父目录的ext4_dir_entry_2里
 		err = ext4_add_nondir(handle, dentry, inode);
 		if (!err && IS_DIRSYNC(dir))
 			ext4_handle_sync(handle);
@@ -2389,6 +2482,7 @@ static int ext4_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	credits = (EXT4_DATA_TRANS_BLOCKS(dir->i_sb) +
 		   EXT4_INDEX_EXTRA_TRANS_BLOCKS + 3);
 retry:
+    //为当前的目录分配一个inode
 	inode = ext4_new_inode_start_handle(dir, S_IFDIR | mode,
 					    &dentry->d_name,
 					    0, NULL, EXT4_HT_DIR, credits);
@@ -2396,14 +2490,16 @@ retry:
 	err = PTR_ERR(inode);
 	if (IS_ERR(inode))
 		goto out_stop;
-
+    //inode->i_op和inode->i_fop赋值
 	inode->i_op = &ext4_dir_inode_operations;
 	inode->i_fop = &ext4_dir_operations;
+    //初始化目录inode
 	err = ext4_init_new_dir(handle, dir, inode);
 	if (err)
 		goto out_clear_inode;
 	err = ext4_mark_inode_dirty(handle, inode);
 	if (!err)
+        //把dentry和inode对应的文件或目录添加到它父目录
 		err = ext4_add_entry(handle, dentry, inode);
 	if (err) {
 out_clear_inode:
@@ -3163,12 +3259,12 @@ end_rename:
  * directories can handle most operations...
  */
 const struct inode_operations ext4_dir_inode_operations = {
-	.create		= ext4_create,
-	.lookup		= ext4_lookup,
+	.create		= ext4_create,//ext4文件系统创建文件
+	.lookup		= ext4_lookup,//在ext4文件系统遍历文件或目录
 	.link		= ext4_link,
 	.unlink		= ext4_unlink,
 	.symlink	= ext4_symlink,
-	.mkdir		= ext4_mkdir,
+	.mkdir		= ext4_mkdir,//ext4文件系统创建目录
 	.rmdir		= ext4_rmdir,
 	.mknod		= ext4_mknod,
 	.rename		= ext4_rename,
